@@ -103,6 +103,7 @@ export class CodexTurn {
   private threadId = "";
   private target: StepTarget | null = null;
   private completed = false;
+  private usageLogged = false;
   private child: ChildHandle | null = null;
   private stderrLevel: CodexLogLevel | null = null;
   private readonly startedToolCalls = new Set<string>();
@@ -137,6 +138,7 @@ export class CodexTurn {
       await child.stdin.write(bytes);
       await child.stdin.close();
       const { code } = await child.exited;
+      if (!this.usageLogged) this.logUsage(null);
       const threadId = this.threadId || this.existingThreadId || "";
       return { threadId, target: this.target, code, completed: this.completed };
     } finally {
@@ -166,7 +168,7 @@ export class CodexTurn {
     }
     if (type === "turn.completed") {
       this.completed = true;
-      this.ctx.log.custom("codex:usage", normaliseUsage(event.usage));
+      this.logUsage(normaliseUsage(event.usage));
       return;
     }
     if (type === "turn.failed" || type === "error") {
@@ -293,6 +295,11 @@ export class CodexTurn {
     this.ctx.log.message(message);
   }
 
+  private logUsage(usage: Record<string, number> | null): void {
+    this.usageLogged = true;
+    this.ctx.log.custom("codex:usage", usage);
+  }
+
   private logAssistant(content: AssistantMessage["content"], stopReason: AssistantMessage["stopReason"]): void {
     const message: AssistantMessage = {
       role: "assistant",
@@ -307,14 +314,18 @@ export class CodexTurn {
   }
 }
 
-function normaliseUsage(value: unknown): Record<string, number> {
-  const usage = recordValue(value) ?? {};
-  return {
-    input_tokens: numberValue(usage.input_tokens),
-    cached_input_tokens: numberValue(usage.cached_input_tokens),
-    output_tokens: numberValue(usage.output_tokens),
-    reasoning_output_tokens: numberValue(usage.reasoning_output_tokens),
-  };
+function normaliseUsage(value: unknown): Record<string, number> | null {
+  const usage = recordValue(value);
+  if (!usage) return null;
+  const input = optionalTokenCount(usage.input_tokens);
+  const output = optionalTokenCount(usage.output_tokens);
+  if (input === null || output === null) return null;
+  const result: Record<string, number> = { input_tokens: input, output_tokens: output };
+  const cachedInput = optionalTokenCount(usage.cached_input_tokens);
+  if (cachedInput !== null) result.cached_input_tokens = cachedInput;
+  const reasoningOutput = optionalTokenCount(usage.reasoning_output_tokens);
+  if (reasoningOutput !== null) result.reasoning_output_tokens = reasoningOutput;
+  return result;
 }
 
 function parseArguments(value: unknown): Record<string, unknown> {
@@ -344,6 +355,10 @@ function numberValue(value: unknown): number {
 
 function optionalNumberValue(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
+}
+
+function optionalTokenCount(value: unknown): number | null {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null;
 }
 
 function stringify(value: unknown): string {

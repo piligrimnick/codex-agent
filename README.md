@@ -114,6 +114,14 @@ Codex `command_execution` events are mapped to standard pi-format `bash`
 command row, renders stdout/stderr with real line breaks, and marks non-zero
 exit codes as errors instead of printing escaped raw JSON.
 
+Each Codex turn records exactly one `codex:usage` boundary. It contains the raw
+Codex counters reported by `turn.completed`, or `null` when the event omits
+accounting or the process exits before completing the turn. Autosk runtimes
+with canonical turn-usage support normalize this namespaced record to
+agent-neutral `autosk:usage`, preserving unavailable usage versus an explicitly
+reported zero. Multiple correction turns therefore produce exact per-session
+totals.
+
 ## Verify
 
 ```bash

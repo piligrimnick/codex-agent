@@ -159,7 +159,10 @@ describe("codexAgent", () => {
           message.content.some((block) => block.type === "text" && block.text === "one\ntwo\n"),
       ),
     ).toBe(true);
-    expect(customs.some((entry) => entry.type === "codex:usage")).toBe(true);
+    expect(customs.filter((entry) => entry.type === "codex:usage").map((entry) => entry.data)).toEqual([
+      { input_tokens: 10, output_tokens: 2 },
+      { input_tokens: 12, output_tokens: 1 },
+    ]);
     expect(customs.some((entry) => entry.type === "codex:command_execution")).toBe(false);
     expect(customs.some((entry) => entry.type === "codex:warn")).toBe(true);
     expect(customs.some((entry) => JSON.stringify(entry.data).includes("verbose setup"))).toBe(false);
@@ -191,6 +194,87 @@ describe("codexAgent", () => {
 
     expect(spawnedEnv?.AUTOSK_MCP_TOKEN).toBe("secret-token");
     expect(spawnedCommand.join(" ")).not.toContain("secret-token");
+  });
+
+  test("distinguishes reported zero usage from unavailable turn usage", async () => {
+    async function reportedUsage(usage: Record<string, number>): Promise<unknown> {
+      const entries: Array<{ type: string; data: unknown }> = [];
+      const ctx = fakeContext({
+        spawn(): ChildHandle {
+          return fakeChild(
+            [
+              { type: "thread.started", thread_id: "thread-usage" },
+              {
+                type: "item.completed",
+                item: {
+                  id: "mcp-usage",
+                  type: "mcp_tool_call",
+                  server: "autosk",
+                  tool: "transit",
+                  arguments: { to: "done" },
+                  result: "ok",
+                },
+              },
+              { type: "turn.completed", usage },
+            ],
+            [],
+          );
+        },
+        log: {
+          message() {},
+          custom(type, data): void {
+            entries.push({ type, data });
+          },
+        },
+      });
+
+      await codexAgent().onRun(ctx);
+      return entries.find((entry) => entry.type === "codex:usage")?.data;
+    }
+
+    expect(
+      await reportedUsage({
+        input_tokens: 0,
+        cached_input_tokens: 0,
+        output_tokens: 0,
+        reasoning_output_tokens: 0,
+      }),
+    ).toEqual({
+      input_tokens: 0,
+      cached_input_tokens: 0,
+      output_tokens: 0,
+      reasoning_output_tokens: 0,
+    });
+    expect(await reportedUsage({})).toBeNull();
+    expect(await reportedUsage({ input_tokens: 1 })).toBeNull();
+    expect(await reportedUsage({ input_tokens: -1, output_tokens: Number.NaN })).toBeNull();
+  });
+
+  test("reports unavailable usage when Codex exits without turn.completed", async () => {
+    const entries: Array<{ type: string; data: unknown }> = [];
+    const ctx = fakeContext({
+      spawn(): ChildHandle {
+        return fakeChild(
+          [
+            { type: "thread.started", thread_id: "thread-failed" },
+            { type: "item.completed", item: { id: "a1", type: "agent_message", text: "partial work" } },
+            { type: "turn.failed", error: { message: "model error" } },
+          ],
+          [],
+        );
+      },
+      log: {
+        message() {},
+        custom(type, data): void {
+          entries.push({ type, data });
+        },
+      },
+    });
+
+    await expect(codexAgent().onRun(ctx)).rejects.toThrow("turn_completed=false");
+    expect(entries.filter((entry) => entry.type === "codex:usage")).toEqual([
+      { type: "codex:usage", data: null },
+    ]);
   });
 });
 

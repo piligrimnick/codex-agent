@@ -1,6 +1,6 @@
 {
   "name": "@piligrimnick/codex-agent",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Autosk agent backed by Codex CLI headless mode (codex exec --json).",
   "license": "MIT",
   "author": "piligrimnick",
